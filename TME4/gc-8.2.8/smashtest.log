@@ -1,0 +1,3 @@
+GC_check_heap_block: found 1 smashed heap objects:
+ 0x7f21ce9f3a98 in or near object at 0x7f21ce9f3a70 (tests/smash_test.c:34, sz= 40)
+PASS smashtest (exit status: 0)

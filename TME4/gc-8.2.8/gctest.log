@@ -1,0 +1,17 @@
+Switched to incremental mode
+Reading dirty bits from /proc
+Completed 6 tests
+Allocated 11731991 collectable objects
+Allocated 1224 uncollectable objects
+Allocated 720420 atomic objects
+Reallocated 36 objects
+Garbage collection after fork is tested too
+Finalized 13341/13341 objects - finalization is probably OK
+Total number of bytes allocated is 627439957
+Total memory use by allocated blocks is 1220608 bytes
+Final heap size is 1236992 bytes
+Obtained 89346048 bytes from OS (of which 65957888 bytes unmapped)
+Final number of reachable objects is 4144
+Completed 332 collections in 474 ms (using 16 marker threads)
+Collector appears to work
+PASS gctest (exit status: 0)

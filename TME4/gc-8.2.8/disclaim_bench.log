@@ -1,0 +1,5 @@
+			fin. ratio       time/s    time/fin.
+regular finalization:       0.9922        0.354  8.50647e-08
+ finalize on reclaim:       1.0000         0.05   1.1921e-08
+     no finalization:       0.0000        0.027          N/A
+PASS disclaim_bench (exit status: 0)

@@ -1,3 +1,3 @@
-local a = 42
-local b = 21
+local a = 4
+local b = 2
 local c = a + b

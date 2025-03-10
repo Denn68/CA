@@ -7,6 +7,8 @@
 #define HEADER_SIZE 12
 
 // Structure du header en fonction du header block
+typedef struct LuaStaticFunctionBlock LuaStaticFunctionBlock; // Déclaration avant usage pour résoudre la récursivité
+
 typedef struct {
     char signature[4];
     uint8_t version;
@@ -20,6 +22,15 @@ typedef struct {
 } LuaHeader;
 
 typedef struct {
+    uint8_t type;
+    union {
+        double number;
+        char* string;
+        uint8_t boolean;
+    } value;
+} LuaConstant;
+
+struct LuaStaticFunctionBlock {
     char* source_name;
     uint32_t line_defined;
     uint32_t last_line_defined;
@@ -27,7 +38,10 @@ typedef struct {
     uint8_t number_of_parameters;
     uint8_t is_vararg_flag;
     uint8_t maximum_stack_size;
-} LuaStaticFunctionBlock;
+    uint8_t* instructions;
+    LuaConstant* constants;
+    LuaStaticFunctionBlock* function_prototypes;  // Fonction récursive
+};
 
 void print_header(const LuaHeader *header) {
     printf("Lua Version: %d\n", header->version);
@@ -48,6 +62,31 @@ void print_static_function_block(const LuaStaticFunctionBlock *func) {
     printf("Number of Parameters: %u\n", func->number_of_parameters);
     printf("Is Vararg Flag: %u\n", func->is_vararg_flag);
     printf("Maximum Stack Size: %u\n", func->maximum_stack_size);
+
+    // Affichage des instructions
+    printf("Instructions:\n");
+    for (uint8_t i = 0; i < func->line_defined; i++) {  // J'ai utilisé line_defined pour la taille ici
+        printf("  [%u] %u\n", i, func->instructions[i]);
+    }
+
+    // Affichage des constantes
+    printf("Constants:\n");
+    for (uint32_t i = 0; i < func->line_defined; i++) {  // Pareil, j'ai utilisé line_defined
+        printf("  [%u] Type: %u, ", i, func->constants[i].type);
+        switch (func->constants[i].type) {
+            case 0: printf("Number: %f\n", func->constants[i].value.number); break;
+            case 1: printf("String: %s\n", func->constants[i].value.string); break;
+            case 2: printf("Boolean: %s\n", func->constants[i].value.boolean ? "true" : "false"); break;
+            default: printf("Unknown type\n"); break;
+        }
+    }
+
+    // Affichage des prototypes de fonctions
+    printf("Function Prototypes:\n");
+    for (uint32_t i = 0; i < func->line_defined; i++) {  // Pareil, j'ai utilisé line_defined ici aussi
+        printf("  Function Prototype %u:\n", i);
+        print_static_function_block(&func->function_prototypes[i]);
+    }
 }
 
 int parse_header(FILE *file, LuaHeader *header) {
@@ -73,7 +112,7 @@ int parse_static_function_block(FILE *file, LuaStaticFunctionBlock *static_funct
     printf("Source size: %ld\n", source_name_length);
 
     // Allouer de la mémoire pour la source_name en fonction de la longueur lue
-    static_function_block->source_name = malloc(source_name_length);
+    static_function_block->source_name = malloc(source_name_length + 1);
     if (!static_function_block->source_name) {
         fprintf(stderr, "Memory allocation failed for source name\n");
         return -1;
@@ -124,8 +163,128 @@ int parse_static_function_block(FILE *file, LuaStaticFunctionBlock *static_funct
         return -1;
     }
 
+    // Lire la liste des instructions (code)
+    uint32_t instruction_count;
+    if (fread(&instruction_count, sizeof(uint32_t), 1, file) != 1) {
+        fprintf(stderr, "Error reading instruction count\n");
+        free(static_function_block->source_name);
+        return -1;
+    }
+
+    printf("Number of instructions: %u\n", instruction_count);
+
+    // Chaque instruction fait 4 octets
+    static_function_block->instructions = malloc(instruction_count * sizeof(uint32_t));
+    if (!static_function_block->instructions) {
+        fprintf(stderr, "Memory allocation failed for instructions\n");
+        free(static_function_block->source_name);
+        return -1;
+    }
+
+    if (fread(static_function_block->instructions, sizeof(uint32_t), instruction_count, file) != instruction_count) {
+        fprintf(stderr, "Error reading instructions\n");
+        free(static_function_block->instructions);
+        free(static_function_block->source_name);
+        return -1;
+    }
+
+    // Lire le nombre de constantes
+    uint32_t constant_count;
+    if (fread(&constant_count, sizeof(uint32_t), 1, file) != 1) {
+        fprintf(stderr, "Error reading constant count\n");
+        free(static_function_block->instructions);
+        free(static_function_block->source_name);
+        return -1;
+    }
+
+    printf("Number of constants: %u\n", constant_count);
+
+    // Allouer et lire les constantes
+    static_function_block->constants = malloc(constant_count * sizeof(LuaConstant));
+    if (!static_function_block->constants) {
+        fprintf(stderr, "Memory allocation failed for constants\n");
+        free(static_function_block->instructions);
+        free(static_function_block->source_name);
+        return -1;
+    }
+
+    for (uint32_t i = 0; i < constant_count; i++) {
+        LuaConstant *constant = &static_function_block->constants[i];
+        if (fread(&constant->type, sizeof(uint8_t), 1, file) != 1) {
+            fprintf(stderr, "Error reading constant type\n");
+            free(static_function_block->constants);
+            free(static_function_block->instructions);
+            free(static_function_block->source_name);
+            return -1;
+        }
+
+        switch (constant->type) {
+            case 0:  // Number
+                if (fread(&constant->value.number, sizeof(double), 1, file) != 1) {
+                    fprintf(stderr, "Error reading constant number\n");
+                    free(static_function_block->constants);
+                    free(static_function_block->instructions);
+                    free(static_function_block->source_name);
+                    return -1;
+                }
+                break;
+            case 1:  // String
+                {
+                    uint32_t str_len;
+                    if (fread(&str_len, sizeof(uint32_t), 1, file) != 1) {
+                        fprintf(stderr, "Error reading string length\n");
+                        free(static_function_block->constants);
+                        free(static_function_block->instructions);
+                        free(static_function_block->source_name);
+                        return -1;
+                    }
+
+                    constant->value.string = malloc(str_len + 1);
+                    if (!constant->value.string) {
+                        fprintf(stderr, "Memory allocation failed for constant string\n");
+                        free(static_function_block->constants);
+                        free(static_function_block->instructions);
+                        free(static_function_block->source_name);
+                        return -1;
+                    }
+
+                    if (fread(constant->value.string, sizeof(char), str_len, file) != str_len) {
+                        fprintf(stderr, "Error reading constant string\n");
+                        free(constant->value.string);
+                        free(static_function_block->constants);
+                        free(static_function_block->instructions);
+                        free(static_function_block->source_name);
+                        return -1;
+                    }
+
+                    constant->value.string[str_len] = '\0';
+                }
+                break;
+            case 2:  // Boolean
+                if (fread(&constant->value.boolean, sizeof(uint8_t), 1, file) != 1) {
+                    fprintf(stderr, "Error reading constant boolean\n");
+                    free(static_function_block->constants);
+                    free(static_function_block->instructions);
+                    free(static_function_block->source_name);
+                    return -1;
+                }
+                break;
+            default:
+            /*
+                fprintf(stderr, "Unknown constant type\n");
+                free(static_function_block->constants);
+                free(static_function_block->instructions);
+                free(static_function_block->source_name);
+                return -1;
+                */
+        }
+    }
+
+    // TODO: Lire les prototypes de fonctions...
+
     return 0;
 }
+
 
 int main(int argc, char *argv[]) {
     if (argc != 2) {

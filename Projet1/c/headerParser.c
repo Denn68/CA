@@ -83,6 +83,15 @@ struct Chunk {
     uint32_t proto_count;
 };
 
+// Table des noms des opcodes
+const char *opcode_names[] = {
+    "MOVE", "LOADK", "LOADBOOL", "LOADNIL", "GETUPVAL", "GETGLOBAL", "GETTABLE",
+    "SETGLOBAL", "SETUPVAL", "SETTABLE", "NEWTABLE", "SELF", "ADD", "SUB", "MUL",
+    "DIV", "MOD", "POW", "UNM", "NOT", "LEN", "CONCAT", "JMP", "EQ", "LT", "LE",
+    "TEST", "TESTSET", "CALL", "TAILCALL", "RETURN", "FORLOOP", "FORPREP", "TFORLOOP",
+    "SETLIST", "CLOSE", "CLOSURE", "VARARG"
+};
+
 // Fonction pour lire un entier 32 bits dans un fichier binaire
 uint32_t read_uint32(FILE *file) {
     uint32_t value;
@@ -132,6 +141,11 @@ Instruction decode_instruction(uint32_t data) {
     instr.C = (data >> 14) & 0x1FF;
     instr.B = (data >> 23) & 0x1FF;
     return instr;
+}
+
+// Fonction pour dumper une instruction sous forme textuelle
+void dump_instruction(Instruction instr) {
+    printf("%10s A: %d B: %d C: %d\n", opcode_names[instr.opcode], instr.A, instr.B, instr.C);
 }
 
 // Fonction pour charger un chunk Lua depuis un fichier
@@ -191,7 +205,7 @@ Chunk* load_chunk(FILE *file) {
 // Fonction principale
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        printf("Usage: %s <luac file>\n", argv[0]);
+        printf("Usage: %s <luac file> [--dump]\n", argv[0]);
         return 1;
     }
 
@@ -255,7 +269,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
 
     // Afficher les instructions
-    printf("\n=== Disassembly de %s ===\n", chunk->name ? chunk->name : "<main>");
+    printf("\n=== PARSING de %s ===\n", chunk->name ? chunk->name : "<main>");
     for (uint32_t i = 0; i < chunk->instruction_count; i++) {
         printf("[%3d] OP: %2d A: %3d B: %3d C: %3d\n", i, chunk->instructions[i].opcode,
                chunk->instructions[i].A, chunk->instructions[i].B, chunk->instructions[i].C);
@@ -309,7 +323,7 @@ int main(int argc, char *argv[]) {
         printf("Number of Source Lines: %u\n", chunk->protos[i]->line_count);
 
         // Afficher les instructions
-        printf("\n=== Disassembly de %s ===\n", chunk->protos[i]->name ? chunk->protos[i]->name : "prototype");
+        printf("\n=== PARSING de %s ===\n", chunk->protos[i]->name ? chunk->protos[i]->name : "prototype");
         for (uint32_t j = 0; j < chunk->protos[i]->instruction_count; j++) {
             printf("[%3d] OP: %2d A: %3d B: %3d C: %3d\n", j, chunk->protos[i]->instructions[j].opcode,
                 chunk->protos[i]->instructions[j].A, chunk->protos[i]->instructions[j].B, chunk->protos[i]->instructions[j].C);
@@ -346,6 +360,22 @@ int main(int argc, char *argv[]) {
         printf("\n=== Source Lines ===\n");
         for (uint32_t j = 0; j < chunk->protos[i]->line_count; j++) {
             printf("Line[%3d]: %u\n", j, chunk->protos[i]->source_lines[j]);
+        }
+
+        // Dumping
+        if (argc > 2 && strcmp(argv[2], "--dump") == 0) {
+            printf("\n=== DUMPING ===\n");
+            for (uint32_t j = 0; j < chunk->protos[i]->instruction_count; j++) {
+                dump_instruction(chunk->protos[i]->instructions[j]);
+            }
+        }
+    }
+
+    // Dumping
+     if (argc > 2 && strcmp(argv[2], "--dump") == 0) {
+        printf("\n=== DUMPING ===\n");
+        for (uint32_t i = 0; i < chunk->instruction_count; i++) {
+            dump_instruction(chunk->instructions[i]);
         }
     }
     

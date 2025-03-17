@@ -6,4 +6,3 @@ local function addition(x, y)
 end
 
 local c = addition(a, b)  
-print(c)  

@@ -1,313 +1,354 @@
 #include <stdio.h>
-#include <stdint.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
+#include <stdbool.h>
 
-#define LUA_SIGNATURE "\x1bLua"
-#define HEADER_SIZE 12
+#define LUA_MAGIC "\x1bLua"
+#define MAX_CONSTANTS 256
+#define MAX_INSTRUCTIONS 256
+#define MAX_LOCALS 256
+#define MAX_UPVALUES 256
+#define MAX_PROTOS 256
+#define MAX_LINES 256
 
-// Structure du header en fonction du header block
-typedef struct LuaStaticFunctionBlock LuaStaticFunctionBlock; // Déclaration avant usage pour résoudre la récursivité
+// Types d'instructions Lua
+typedef enum {
+    ABC,
+    ABx,
+    AsBx
+} InstructionType;
 
+// Structure d'une instruction
 typedef struct {
-    char signature[4];
-    uint8_t version;
-    uint8_t format;
-    char endianness;
-    uint8_t int_size;
-    uint8_t size_t_size;
-    uint8_t instruction_size;
-    uint8_t lua_number_size;
-    uint8_t integral_flag;
-} LuaHeader;
+    InstructionType type;
+    char name[16];
+    uint8_t opcode;
+    uint8_t A;
+    uint16_t B;
+    uint16_t C;
+} Instruction;
 
+// Structure d'une constante
 typedef struct {
     uint8_t type;
     union {
         double number;
-        char* string;
-        uint8_t boolean;
+        char *string;
+        bool boolean;
     } value;
-} LuaConstant;
+} Constant;
 
-struct LuaStaticFunctionBlock {
-    char* source_name;
-    uint32_t line_defined;
-    uint32_t last_line_defined;
-    uint8_t number_of_upvalues;
-    uint8_t number_of_parameters;
-    uint8_t is_vararg_flag;
-    uint8_t maximum_stack_size;
-    uint8_t* instructions;
-    LuaConstant* constants;
-    LuaStaticFunctionBlock* function_prototypes;  // Fonction récursive
+// Structure d'une variable locale
+typedef struct {
+    char *name;
+    uint32_t start_pc;
+    uint32_t end_pc;
+} Local;
+
+// Structure d'une upvalue
+typedef struct {
+    char *name;
+} Upvalue;
+
+// Déclaration anticipée pour la récursivité
+typedef struct Chunk Chunk;
+
+// Structure d'un chunk (fonction Lua compilée)
+struct Chunk {
+    char *name;
+    uint32_t first_line;
+    uint32_t last_line;
+    uint8_t numUpvals;
+    uint8_t numParams;
+    bool isVarg;
+    uint8_t maxStack;
+    
+    Instruction instructions[MAX_INSTRUCTIONS];
+    uint32_t instruction_count;
+
+    Constant constants[MAX_CONSTANTS];
+    uint32_t constant_count;
+
+    Local locals[MAX_LOCALS];
+    uint32_t local_count;
+    
+    Upvalue upvalues[MAX_UPVALUES];
+    uint32_t upvalue_count;
+    
+    uint32_t source_lines[MAX_LINES];
+    uint32_t line_count;
+
+    Chunk *protos[MAX_PROTOS];
+    uint32_t proto_count;
 };
 
-void print_header(const LuaHeader *header) {
-    printf("Lua Version: %d\n", header->version);
-    printf("Format: %d\n", header->format);
-    printf("Endianness: %s\n", header->endianness ? "Little" : "Big");
-    printf("Integer Size: %d\n", header->int_size);
-    printf("Size_t Size: %d\n", header->size_t_size);
-    printf("Instruction Size: %d\n", header->instruction_size);
-    printf("Lua Number Size: %d\n", header->lua_number_size);
-    printf("Integral Flag: %d\n", header->integral_flag);
+// Fonction pour lire un entier 32 bits dans un fichier binaire
+uint32_t read_uint32(FILE *file) {
+    uint32_t value;
+    fread(&value, sizeof(uint32_t), 1, file);
+    return value;
 }
 
-void print_static_function_block(const LuaStaticFunctionBlock *func) {
-    printf("Source Name: %s\n", func->source_name ? func->source_name : "(none)");
-    printf("Line Defined: %u\n", func->line_defined);
-    printf("Last Line Defined: %u\n", func->last_line_defined);
-    printf("Number of Upvalues: %u\n", func->number_of_upvalues);
-    printf("Number of Parameters: %u\n", func->number_of_parameters);
-    printf("Is Vararg Flag: %u\n", func->is_vararg_flag);
-    printf("Maximum Stack Size: %u\n", func->maximum_stack_size);
+// Fonction pour lire un octet
+uint8_t read_byte(FILE *file) {
+    uint8_t value;
+    fread(&value, sizeof(uint8_t), 1, file);
+    return value;
+}
 
-    // Affichage des instructions
-    printf("Instructions:\n");
-    for (uint8_t i = 0; i < func->line_defined; i++) {  // J'ai utilisé line_defined pour la taille ici
-        printf("  [%u] %u\n", i, func->instructions[i]);
+// Fonction pour lire une chaîne de caractères
+char* read_string(FILE *file) {
+    size_t string_length;
+    if (fread(&string_length, sizeof(size_t), 1, file) != 1) {
+        fprintf(stderr, "Error reading string length\n");
+        return "";
     }
 
-    // Affichage des constantes
-    printf("Constants:\n");
-    for (uint32_t i = 0; i < func->line_defined; i++) {  // Pareil, j'ai utilisé line_defined
-        printf("  [%u] Type: %u, ", i, func->constants[i].type);
-        switch (func->constants[i].type) {
-            case 0: printf("Number: %f\n", func->constants[i].value.number); break;
-            case 1: printf("String: %s\n", func->constants[i].value.string); break;
-            case 2: printf("Boolean: %s\n", func->constants[i].value.boolean ? "true" : "false"); break;
-            default: printf("Unknown type\n"); break;
+    // Allouer de la mémoire pour la string en fonction de la longueur lue
+    char* string;
+    string = malloc(string_length + 1);
+    if (!string) {
+        fprintf(stderr, "Memory allocation string\n");
+        return "";
+    }
+
+    // Lire la string
+    if (fread(string, sizeof(char), string_length, file) != string_length) {
+        fprintf(stderr, "Error reading string\n");
+        free(string);  // Libérer la mémoire en cas d'erreur
+        return "";
+    }
+    string[string_length] = '\0';  // Ajouter le caractère nul de fin
+
+    return string;
+}
+
+// Fonction de décodage d'une instruction
+Instruction decode_instruction(uint32_t data) {
+    Instruction instr;
+    instr.opcode = data & 0x3F;
+    instr.A = (data >> 6) & 0xFF;
+    instr.C = (data >> 14) & 0x1FF;
+    instr.B = (data >> 23) & 0x1FF;
+    return instr;
+}
+
+// Fonction pour charger un chunk Lua depuis un fichier
+Chunk* load_chunk(FILE *file) {
+    Chunk *chunk = malloc(sizeof(Chunk));
+    chunk->name = read_string(file);
+    chunk->first_line = read_uint32(file);
+    chunk->last_line = read_uint32(file);
+    chunk->numUpvals = read_byte(file);
+    chunk->numParams = read_byte(file);
+    chunk->isVarg = read_byte(file) != 0;
+    chunk->maxStack = read_byte(file);
+
+    chunk->instruction_count = read_uint32(file);
+    for (uint32_t i = 0; i < chunk->instruction_count; i++) {
+        uint32_t instr_data = read_uint32(file);
+        chunk->instructions[i] = decode_instruction(instr_data);
+    }
+
+    chunk->constant_count = read_uint32(file);
+    for (uint32_t i = 0; i < chunk->constant_count; i++) {
+        chunk->constants[i].type = read_byte(file);
+        if (chunk->constants[i].type == 3) {
+            fread(&chunk->constants[i].value.number, sizeof(double), 1, file);
+        } else if (chunk->constants[i].type == 4) {
+            chunk->constants[i].value.string = read_string(file);
+        } else if (chunk->constants[i].type == 1) {
+            chunk->constants[i].value.boolean = read_byte(file) != 0;
         }
-    }
-
-    // Affichage des prototypes de fonctions
-    printf("Function Prototypes:\n");
-    for (uint32_t i = 0; i < func->line_defined; i++) {  // Pareil, j'ai utilisé line_defined ici aussi
-        printf("  Function Prototype %u:\n", i);
-        print_static_function_block(&func->function_prototypes[i]);
-    }
-}
-
-int parse_header(FILE *file, LuaHeader *header) {
-    if (fread(header, sizeof(LuaHeader), 1, file) != 1) {
-        fprintf(stderr, "Error reading header\n");
-        return -1;
-    }
-    if (memcmp(header->signature, LUA_SIGNATURE, 4) != 0) {
-        fprintf(stderr, "Invalid Lua signature\n");
-        return -1;
-    }
-    return 0;
-}
-
-int parse_static_function_block(FILE *file, LuaStaticFunctionBlock *static_function_block) {
-    // Lecture de la source (nom de la source)
-    size_t source_name_length;
-    if (fread(&source_name_length, sizeof(size_t), 1, file) != 1) {
-        fprintf(stderr, "Error reading source name length\n");
-        return -1;
-    }
-
-    printf("Source size: %ld\n", source_name_length);
-
-    // Allouer de la mémoire pour la source_name en fonction de la longueur lue
-    static_function_block->source_name = malloc(source_name_length + 1);
-    if (!static_function_block->source_name) {
-        fprintf(stderr, "Memory allocation failed for source name\n");
-        return -1;
-    }
-
-    // Lire le nom de la source
-    if (fread(static_function_block->source_name, sizeof(char), source_name_length, file) != source_name_length) {
-        fprintf(stderr, "Error reading source name\n");
-        free(static_function_block->source_name);  // Libérer la mémoire en cas d'erreur
-        return -1;
-    }
-    static_function_block->source_name[source_name_length] = '\0';  // Ajouter le caractère nul de fin
-
-    // Lire le reste du bloc de fonction statique
-    if (fread(&static_function_block->line_defined, sizeof(uint32_t), 1, file) != 1) {
-        fprintf(stderr, "Error reading line_defined\n");
-        free(static_function_block->source_name);  // Libérer la mémoire en cas d'erreur
-        return -1;
     }
     
-    if (fread(&static_function_block->last_line_defined, sizeof(uint32_t), 1, file) != 1) {
-        fprintf(stderr, "Error reading last_line_defined\n");
-        free(static_function_block->source_name);  // Libérer la mémoire en cas d'erreur
-        return -1;
+    chunk->proto_count = read_uint32(file);
+    for (uint32_t i = 0; i < chunk->proto_count; i++) {
+        chunk->protos[i] = load_chunk(file);
     }
 
-    if (fread(&static_function_block->number_of_upvalues, sizeof(uint8_t), 1, file) != 1) {
-        fprintf(stderr, "Error reading number_of_upvalues\n");
-        free(static_function_block->source_name);  // Libérer la mémoire en cas d'erreur
-        return -1;
+    chunk->line_count = read_uint32(file);
+    for (uint32_t i = 0; i < chunk->line_count; i++) {
+        chunk->source_lines[i] = read_uint32(file);
+    }
+    
+    chunk->local_count = read_uint32(file);
+    for (uint32_t i = 0; i < chunk->local_count; i++) {
+        chunk->locals[i].name = read_string(file);
+        chunk->locals[i].start_pc = read_uint32(file);
+        chunk->locals[i].end_pc = read_uint32(file);
+    }
+    
+    chunk->upvalue_count = read_uint32(file);
+    for (uint32_t i = 0; i < chunk->upvalue_count; i++) {
+        chunk->upvalues[i].name = read_string(file);
     }
 
-    if (fread(&static_function_block->number_of_parameters, sizeof(uint8_t), 1, file) != 1) {
-        fprintf(stderr, "Error reading number_of_parameters\n");
-        free(static_function_block->source_name);  // Libérer la mémoire en cas d'erreur
-        return -1;
-    }
-
-    if (fread(&static_function_block->is_vararg_flag, sizeof(uint8_t), 1, file) != 1) {
-        fprintf(stderr, "Error reading is_vararg_flag\n");
-        free(static_function_block->source_name);  // Libérer la mémoire en cas d'erreur
-        return -1;
-    }
-
-    if (fread(&static_function_block->maximum_stack_size, sizeof(uint8_t), 1, file) != 1) {
-        fprintf(stderr, "Error reading maximum_stack_size\n");
-        free(static_function_block->source_name);  // Libérer la mémoire en cas d'erreur
-        return -1;
-    }
-
-    // Lire la liste des instructions (code)
-    uint32_t instruction_count;
-    if (fread(&instruction_count, sizeof(uint32_t), 1, file) != 1) {
-        fprintf(stderr, "Error reading instruction count\n");
-        free(static_function_block->source_name);
-        return -1;
-    }
-
-    printf("Number of instructions: %u\n", instruction_count);
-
-    // Chaque instruction fait 4 octets
-    static_function_block->instructions = malloc(instruction_count * sizeof(uint32_t));
-    if (!static_function_block->instructions) {
-        fprintf(stderr, "Memory allocation failed for instructions\n");
-        free(static_function_block->source_name);
-        return -1;
-    }
-
-    if (fread(static_function_block->instructions, sizeof(uint32_t), instruction_count, file) != instruction_count) {
-        fprintf(stderr, "Error reading instructions\n");
-        free(static_function_block->instructions);
-        free(static_function_block->source_name);
-        return -1;
-    }
-
-    // Lire le nombre de constantes
-    uint32_t constant_count;
-    if (fread(&constant_count, sizeof(uint32_t), 1, file) != 1) {
-        fprintf(stderr, "Error reading constant count\n");
-        free(static_function_block->instructions);
-        free(static_function_block->source_name);
-        return -1;
-    }
-
-    printf("Number of constants: %u\n", constant_count);
-
-    // Allouer et lire les constantes
-    static_function_block->constants = malloc(constant_count * sizeof(LuaConstant));
-    if (!static_function_block->constants) {
-        fprintf(stderr, "Memory allocation failed for constants\n");
-        free(static_function_block->instructions);
-        free(static_function_block->source_name);
-        return -1;
-    }
-
-    for (uint32_t i = 0; i < constant_count; i++) {
-        LuaConstant *constant = &static_function_block->constants[i];
-        if (fread(&constant->type, sizeof(uint8_t), 1, file) != 1) {
-            fprintf(stderr, "Error reading constant type\n");
-            free(static_function_block->constants);
-            free(static_function_block->instructions);
-            free(static_function_block->source_name);
-            return -1;
-        }
-
-        switch (constant->type) {
-            case 0:  // Number
-                if (fread(&constant->value.number, sizeof(double), 1, file) != 1) {
-                    fprintf(stderr, "Error reading constant number\n");
-                    free(static_function_block->constants);
-                    free(static_function_block->instructions);
-                    free(static_function_block->source_name);
-                    return -1;
-                }
-                break;
-            case 1:  // String
-                {
-                    uint32_t str_len;
-                    if (fread(&str_len, sizeof(uint32_t), 1, file) != 1) {
-                        fprintf(stderr, "Error reading string length\n");
-                        free(static_function_block->constants);
-                        free(static_function_block->instructions);
-                        free(static_function_block->source_name);
-                        return -1;
-                    }
-
-                    constant->value.string = malloc(str_len + 1);
-                    if (!constant->value.string) {
-                        fprintf(stderr, "Memory allocation failed for constant string\n");
-                        free(static_function_block->constants);
-                        free(static_function_block->instructions);
-                        free(static_function_block->source_name);
-                        return -1;
-                    }
-
-                    if (fread(constant->value.string, sizeof(char), str_len, file) != str_len) {
-                        fprintf(stderr, "Error reading constant string\n");
-                        free(constant->value.string);
-                        free(static_function_block->constants);
-                        free(static_function_block->instructions);
-                        free(static_function_block->source_name);
-                        return -1;
-                    }
-
-                    constant->value.string[str_len] = '\0';
-                }
-                break;
-            case 2:  // Boolean
-                if (fread(&constant->value.boolean, sizeof(uint8_t), 1, file) != 1) {
-                    fprintf(stderr, "Error reading constant boolean\n");
-                    free(static_function_block->constants);
-                    free(static_function_block->instructions);
-                    free(static_function_block->source_name);
-                    return -1;
-                }
-                break;
-            default:
-            /*
-                fprintf(stderr, "Unknown constant type\n");
-                free(static_function_block->constants);
-                free(static_function_block->instructions);
-                free(static_function_block->source_name);
-                return -1;
-                */
-        }
-    }
-
-    // TODO: Lire les prototypes de fonctions...
-
-    return 0;
+    return chunk;
 }
 
-
+// Fonction principale
 int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <bytecode file>\n", argv[0]);
+    if (argc < 2) {
+        printf("Usage: %s <luac file>\n", argv[0]);
         return 1;
     }
-    
+
     FILE *file = fopen(argv[1], "rb");
     if (!file) {
-        perror("Error opening file");
+        perror("Erreur d'ouverture du fichier");
         return 1;
     }
-    
-    LuaHeader header;
-    if (parse_header(file, &header) == 0) {
-        print_header(&header);
+
+    // Lire et vérifier la signature Lua
+    char magic[4];
+    fread(magic, 1, 4, file);
+    if (memcmp(magic, LUA_MAGIC, 4) != 0) {
+        printf("Fichier non valide : ce n'est pas un bytecode Lua.\n");
+        fclose(file);
+        return 1;
     }
 
-    LuaStaticFunctionBlock static_function_block;
-    if (parse_static_function_block(file, &static_function_block) == 0) {
-        print_static_function_block(&static_function_block);
+    // Lire l'en-tête du fichier
+    uint8_t version = read_byte(file);
+    uint8_t format = read_byte(file);
+    uint8_t endianess = read_byte(file);
+    uint8_t int_size = read_byte(file);
+    uint8_t size = read_byte(file);
+    uint8_t instr_size = read_byte(file);
+    uint8_t number_size = read_byte(file);
+    uint8_t integral_flag = read_byte(file);
+
+    printf("HEADER \n");
+    printf("\n");
+    printf("Lua Version: %.1f\n", version / 16.0);
+    printf("Format: %d\n", format);
+    printf("Endianness: %s\n", endianess ? "Little" : "Big");
+    printf("Integer Size: %d\n", int_size);
+    printf("Size_t Size: %d\n", size);
+    printf("Instruction Size: %d\n", instr_size);
+    printf("Lua Number Size: %d\n", number_size);
+    printf("Integral Flag: %d\n", integral_flag);
+    printf("\n");
+
+
+
+    // Charger le chunk principal
+    Chunk *chunk = load_chunk(file);
+    fclose(file);
+
+    printf("STATIC FUNCTION BLOCK\n");
+    printf("\n");
+    printf("Source Name: %s\n", chunk->name ? chunk->name : "(none)");
+    printf("Line Defined: %u\n", chunk->first_line);
+    printf("Last Line Defined: %u\n", chunk->last_line);
+    printf("Number of Upvalues: %u\n", chunk->numUpvals);
+    printf("Number of Parameters: %u\n", chunk->numParams);
+    printf("Is Vararg Flag: %u\n", chunk->isVarg);
+    printf("Maximum Stack Size: %u\n", chunk->maxStack);
+    printf("Number of Instructions: %u\n", chunk->instruction_count);
+    printf("Number of Constants: %u\n", chunk->constant_count);
+    printf("Number of Locals: %u\n", chunk->local_count);
+    printf("Number of Upvalues: %u\n", chunk->upvalue_count);
+    printf("Number of Source Lines: %u\n", chunk->line_count);
+    printf("\n");
+
+    // Afficher les instructions
+    printf("\n=== Disassembly de %s ===\n", chunk->name ? chunk->name : "<main>");
+    for (uint32_t i = 0; i < chunk->instruction_count; i++) {
+        printf("[%3d] OP: %2d A: %3d B: %3d C: %3d\n", i, chunk->instructions[i].opcode,
+               chunk->instructions[i].A, chunk->instructions[i].B, chunk->instructions[i].C);
+    }
+
+    // Afficher les constantes
+    printf("\n=== Constantes ===\n");
+    for (uint32_t i = 0; i < chunk->constant_count; i++) {
+        printf("Const[%3d] Type: %d\n", i, chunk->constants[i].type);
+        switch (chunk->constants[i].type) {
+            case 0: printf("Constant does not exist\n"); break;
+            case 1: printf("Boolean: %s\n", chunk->constants[i].value.boolean ? "true" : "false"); break;
+            case 3: printf("Number: %f\n", chunk->constants[i].value.number); break;
+            case 4: printf("String: %s\n", chunk->constants[i].value.string); break;
+            default : printf("Unknown type\n"); break;
+        }
+    }
+
+    // Afficher les variables locales
+    printf("\n=== Locals ===\n");
+    for (uint32_t i = 0; i < chunk->local_count; i++) {
+        printf("Local[%3d] Name: %s, Start: %u, End: %u\n", i, chunk->locals[i].name, chunk->locals[i].start_pc, chunk->locals[i].end_pc);
+    }
+
+    // Afficher les upvalues
+    printf("\n=== Upvalues ===\n");
+    for (uint32_t i = 0; i < chunk->upvalue_count; i++) {
+        printf("Upvalue[%3d] Name: %s\n", i, chunk->upvalues[i].name);
+    }
+
+    // Afficher les lignes sources
+    printf("\n=== Source Lines ===\n");
+    for (uint32_t i = 0; i < chunk->line_count; i++) {
+        printf("Line[%3d]: %u\n", i, chunk->source_lines[i]);
+    }
+
+    printf("\n=== Prototypes de fonctions ===\n");
+    for (uint32_t i = 0; i < chunk->proto_count; i++) {
+        printf("Prototype %d\n", i);
+        printf("Source Name: %s\n", chunk->protos[i]->name ? chunk->protos[i]->name : "(none)");
+        printf("Line Defined: %u\n", chunk->protos[i]->first_line);
+        printf("Last Line Defined: %u\n", chunk->protos[i]->last_line);
+        printf("Number of Upvalues: %u\n", chunk->protos[i]->numUpvals);
+        printf("Number of Parameters: %u\n", chunk->protos[i]->numParams);
+        printf("Is Vararg Flag: %u\n", chunk->protos[i]->isVarg);
+        printf("Maximum Stack Size: %u\n", chunk->protos[i]->maxStack);
+        printf("Number of Instructions: %u\n", chunk->protos[i]->instruction_count);
+        printf("Number of Constants: %u\n", chunk->protos[i]->constant_count);
+        printf("Number of Locals: %u\n", chunk->protos[i]->local_count);
+        printf("Number of Upvalues: %u\n", chunk->protos[i]->upvalue_count);
+        printf("Number of Source Lines: %u\n", chunk->protos[i]->line_count);
+
+        // Afficher les instructions
+        printf("\n=== Disassembly de %s ===\n", chunk->protos[i]->name ? chunk->protos[i]->name : "prototype");
+        for (uint32_t j = 0; j < chunk->protos[i]->instruction_count; j++) {
+            printf("[%3d] OP: %2d A: %3d B: %3d C: %3d\n", j, chunk->protos[i]->instructions[j].opcode,
+                chunk->protos[i]->instructions[j].A, chunk->protos[i]->instructions[j].B, chunk->protos[i]->instructions[j].C);
+        }
+
+        // Afficher les constantes
+        printf("\n=== Constantes ===\n");
+        for (uint32_t j = 0; j < chunk->protos[i]->constant_count; j++) {
+            printf("Const[%3d] Type: %d\n", j, chunk->protos[i]->constants[j].type);
+            switch (chunk->protos[i]->constants[j].type) {
+                case 0: printf("Constant does not exist\n"); break;
+                case 1: printf("Boolean: %s\n", chunk->protos[i]->constants[j].value.boolean ? "true" : "false"); break;
+                case 3: printf("Number: %f\n", chunk->protos[i]->constants[j].value.number); break;
+                case 4: printf("String: %s\n", chunk->protos[i]->constants[j].value.string); break;
+                default : printf("Unknown type\n"); break;
+            }
+        }
+
+        // Afficher les variables locales
+        printf("\n=== Locals ===\n");
+        for (uint32_t j = 0; j < chunk->protos[i]->local_count; j++) {
+            printf("Local[%3d] Name: %s, Start: %u, End: %u\n",
+                j, chunk->protos[i]->locals[j].name, 
+                chunk->protos[i]->locals[j].start_pc, chunk->protos[i]->locals[j].end_pc);
+        }
+
+        // Afficher les upvalues
+        printf("\n=== Upvalues ===\n");
+        for (uint32_t j = 0; j < chunk->protos[i]->upvalue_count; j++) {
+            printf("Upvalue[%3d] Name: %s\n", j, chunk->protos[i]->upvalues[j].name);
+        }
+
+        // Afficher les lignes sources
+        printf("\n=== Source Lines ===\n");
+        for (uint32_t j = 0; j < chunk->protos[i]->line_count; j++) {
+            printf("Line[%3d]: %u\n", j, chunk->protos[i]->source_lines[j]);
+        }
     }
     
-    fclose(file);
+    free(chunk);
     return 0;
 }

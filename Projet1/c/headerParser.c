@@ -4,7 +4,7 @@
 #include <string.h>
 #include <stdbool.h>
 
-#define LUA_MAGIC "\x1bLua"
+#define LUA_SIGNATURE "\x1bLua"
 #define MAX_CONSTANTS 256
 #define MAX_INSTRUCTIONS 256
 #define MAX_LOCALS 256
@@ -343,9 +343,9 @@ int main(int argc, char *argv[]) {
     }
 
     // Lire et vérifier la signature Lua
-    char magic[4];
-    fread(magic, 1, 4, file);
-    if (memcmp(magic, LUA_MAGIC, 4) != 0) {
+    char signature[4];
+    fread(signature, 1, 4, file);
+    if (memcmp(signature, LUA_SIGNATURE, 4) != 0) {
         printf("Fichier non valide : ce n'est pas un bytecode Lua.\n");
         fclose(file);
         return 1;

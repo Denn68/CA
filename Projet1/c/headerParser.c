@@ -248,24 +248,55 @@ typedef struct {
     uint32_t proto_count;
 } VM;
 
+void vm_execute(VM *vm); // Déclaration pour enlever le warning
+
 double call_prototype(Chunk *proto, double *args, int nargs) {
-    VMValue registers[256] = {0};
-    for (int i = 0; i < nargs && i < proto->numParams; i++) {
-        registers[i].type = VAL_NUMBER;
-        registers[i].as.number = args[i];
+    VM subvm = {
+        .constants = proto->constants,
+        .instructions = proto->instructions,
+        .instruction_count = proto->instruction_count,
+        .protos = proto->protos,
+        .proto_count = proto->proto_count
+    };
+
+    // Init des registres avec les arguments
+    for (int i = 0; i < nargs && i < 256; i++) {
+        subvm.registers[i].type = VAL_NUMBER;
+        subvm.registers[i].as.number = args[i];
     }
 
-    for (uint32_t pc = 0; pc < proto->instruction_count; pc++) {
+    // Exécute les instructions
+     for (uint32_t pc = 0; pc < proto->instruction_count; pc++) {
         Instruction instr = proto->instructions[pc];
         switch (instr.opcode) {
-            case 12:
-                registers[instr.A].type = VAL_NUMBER;
-                registers[instr.A].as.number = registers[instr.B].as.number + registers[instr.C].as.number;
+            case 12: // ADD
+                subvm.registers[instr.A].type = VAL_NUMBER;
+                subvm.registers[instr.A].as.number =
+                    subvm.registers[instr.B].as.number + subvm.registers[instr.C].as.number;
                 break;
-            case 30:
-                return registers[instr.A].as.number;
+            case 13: // SUB
+                subvm.registers[instr.A].type = VAL_NUMBER;
+                subvm.registers[instr.A].as.number =
+                    subvm.registers[instr.B].as.number - subvm.registers[instr.C].as.number;
+                break;
+            case 14: // MUL
+                subvm.registers[instr.A].type = VAL_NUMBER;
+                subvm.registers[instr.A].as.number =
+                    subvm.registers[instr.B].as.number * subvm.registers[instr.C].as.number;
+                break;
+            case 15: // DIV
+                subvm.registers[instr.A].type = VAL_NUMBER;
+                subvm.registers[instr.A].as.number =
+                    subvm.registers[instr.B].as.number / subvm.registers[instr.C].as.number;
+                break;
+            case 30: // RETURN
+                if (subvm.registers[instr.A].type == VAL_NUMBER)
+                    return subvm.registers[instr.A].as.number;
+                else
+                    return 0.0;
         }
     }
+    
     return 0.0;
 }
 
@@ -293,9 +324,23 @@ void vm_execute(VM *vm) {
                 }
                 break;
             }
-            case 12:
+            case 12: // ADD
                 vm->registers[instr.A].type = VAL_NUMBER;
                 vm->registers[instr.A].as.number = vm->registers[instr.B].as.number + vm->registers[instr.C].as.number;
+                break;
+            case 13: // SUB
+                vm->registers[instr.A].type = VAL_NUMBER;
+                vm->registers[instr.A].as.number = vm->registers[instr.B].as.number - vm->registers[instr.C].as.number;
+                break;
+
+            case 14: // MUL
+                vm->registers[instr.A].type = VAL_NUMBER;
+                vm->registers[instr.A].as.number = vm->registers[instr.B].as.number * vm->registers[instr.C].as.number;
+                break;
+
+            case 15: // DIV
+                vm->registers[instr.A].type = VAL_NUMBER;
+                vm->registers[instr.A].as.number = vm->registers[instr.B].as.number / vm->registers[instr.C].as.number;
                 break;
             case 28: {
                 VMValue func = vm->registers[instr.A];
@@ -304,7 +349,6 @@ void vm_execute(VM *vm) {
                 for (int i = 0; i < n_args; i++) {
                     args[i] = vm->registers[instr.A + 1 + i].as.number;
                 }
-
                 if (func.type == VAL_CLOSURE) {
                     double result = call_prototype(func.as.closure, args, n_args);
                     if (instr.C > 1) {
@@ -320,7 +364,7 @@ void vm_execute(VM *vm) {
                 return;
             case 36:
                 vm->registers[instr.A].type = VAL_CLOSURE;
-                vm->registers[instr.A].as.closure = vm->protos[instr.B];
+                vm->registers[instr.A].as.closure = vm->protos[instr.Bx];
                 break;
             default:
                 printf("Opcode non pris en charge : %s\n", opcode_names[instr.opcode]);

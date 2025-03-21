@@ -269,31 +269,75 @@ double call_prototype(Chunk *proto, double *args, int nargs) {
      for (uint32_t pc = 0; pc < proto->instruction_count; pc++) {
         Instruction instr = proto->instructions[pc];
         switch (instr.opcode) {
+            case 0:
+                subvm.registers[instr.A] = subvm.registers[instr.B];
+                break;
+            case 1:
+                subvm.registers[instr.A].type = VAL_NUMBER;
+                subvm.registers[instr.A].as.number = subvm.constants[instr.Bx].value.number;
+                break;
+            case 5: {
+                if (instr.Bx < MAX_CONSTANTS && subvm.constants[instr.Bx].type == 4) {
+                    char *name = subvm.constants[instr.Bx].value.string;
+                    for (int i = 0; i < NUM_GLOBALS; i++) {
+                        if (strcmp(globals[i].name, name) == 0) {
+                            subvm.registers[instr.A].type = VAL_NATIVE;
+                            subvm.registers[instr.A].as.native = globals[i].function;
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
             case 12: // ADD
                 subvm.registers[instr.A].type = VAL_NUMBER;
-                subvm.registers[instr.A].as.number =
-                    subvm.registers[instr.B].as.number + subvm.registers[instr.C].as.number;
+                subvm.registers[instr.A].as.number = subvm.registers[instr.B].as.number + subvm.registers[instr.C].as.number;
                 break;
             case 13: // SUB
                 subvm.registers[instr.A].type = VAL_NUMBER;
-                subvm.registers[instr.A].as.number =
-                    subvm.registers[instr.B].as.number - subvm.registers[instr.C].as.number;
+                subvm.registers[instr.A].as.number = subvm.registers[instr.B].as.number - subvm.registers[instr.C].as.number;
                 break;
+
             case 14: // MUL
                 subvm.registers[instr.A].type = VAL_NUMBER;
-                subvm.registers[instr.A].as.number =
-                    subvm.registers[instr.B].as.number * subvm.registers[instr.C].as.number;
+                subvm.registers[instr.A].as.number = subvm.registers[instr.B].as.number * subvm.registers[instr.C].as.number;
                 break;
+
             case 15: // DIV
                 subvm.registers[instr.A].type = VAL_NUMBER;
-                subvm.registers[instr.A].as.number =
-                    subvm.registers[instr.B].as.number / subvm.registers[instr.C].as.number;
+                subvm.registers[instr.A].as.number = subvm.registers[instr.B].as.number / subvm.registers[instr.C].as.number;
                 break;
+            case 28: {
+                VMValue func = subvm.registers[instr.A];
+                int n_args = instr.B - 1;
+                double args[10];
+                for (int i = 0; i < n_args; i++) {
+                    args[i] = subvm.registers[instr.A + 1 + i].as.number;
+                }
+                if (func.type == VAL_CLOSURE) {
+                    double result = call_prototype(func.as.closure, args, n_args);
+                    if (instr.C > 1) {
+                        subvm.registers[instr.A].type = VAL_NUMBER;
+                        subvm.registers[instr.A].as.number = result;
+                    }
+                } else if (func.type == VAL_NATIVE) {
+                    func.as.native(args, n_args);
+                }
+                break;
+            }
             case 30: // RETURN
                 if (subvm.registers[instr.A].type == VAL_NUMBER)
                     return subvm.registers[instr.A].as.number;
                 else
                     return 0.0;
+            case 36:
+                subvm.registers[instr.A].type = VAL_CLOSURE;
+                subvm.registers[instr.A].as.closure = subvm.protos[instr.Bx];
+                break;
+            default:
+                printf("Opcode non pris en charge : %s\n", opcode_names[instr.opcode]);
+                break;
+            
         }
     }
     

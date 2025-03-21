@@ -145,7 +145,7 @@ Instruction decode_instruction(uint32_t data) {
 
 // Fonction pour dumper une instruction
 void dump_instruction(Instruction instr) {
-    printf("Instruction: %10s A: %d B: %d C: %d\n", opcode_names[instr.opcode], instr.A, instr.B, instr.C);
+    printf("Instruction: %10s A: %d B: %d C: %d Bx :%d\n", opcode_names[instr.opcode], instr.A, instr.B, instr.C, instr.Bx);
 }
 
 // Fonction pour charger un chunk Lua

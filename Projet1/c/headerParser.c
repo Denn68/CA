@@ -27,6 +27,7 @@ typedef struct {
     uint8_t A;
     uint16_t B;
     uint16_t C;
+    uint32_t Bx; 
 } Instruction;
 
 // Structure d'une constante
@@ -51,10 +52,10 @@ typedef struct {
     char *name;
 } Upvalue;
 
-// Déclaration anticipée pour la récursivité
+// Structure d'un chunk (fonction Lua compilée)
 typedef struct Chunk Chunk;
 
-// Structure d'un chunk (fonction Lua compilée)
+
 struct Chunk {
     char *name;
     uint32_t first_line;
@@ -92,7 +93,7 @@ const char *opcode_names[] = {
     "SETLIST", "CLOSE", "CLOSURE", "VARARG"
 };
 
-// Fonction pour lire un entier 32 bits dans un fichier binaire
+// Fonction pour lire un entier 32 bits
 uint32_t read_uint32(FILE *file) {
     uint32_t value;
     fread(&value, sizeof(uint32_t), 1, file);
@@ -114,7 +115,6 @@ char* read_string(FILE *file) {
         return "";
     }
 
-    // Allouer de la mémoire pour la string en fonction de la longueur lue
     char* string;
     string = malloc(string_length + 1);
     if (!string) {
@@ -122,7 +122,6 @@ char* read_string(FILE *file) {
         return "";
     }
 
-    // Lire la string
     if (fread(string, sizeof(char), string_length, file) != string_length) {
         fprintf(stderr, "Error reading string\n");
         free(string);  // Libérer la mémoire en cas d'erreur
@@ -140,12 +139,13 @@ Instruction decode_instruction(uint32_t data) {
     instr.A = (data >> 6) & 0xFF;
     instr.C = (data >> 14) & 0x1FF;
     instr.B = (data >> 23) & 0x1FF;
+    instr.Bx = (data >> 14);
     return instr;
 }
 
-// Fonction pour dumper une instruction sous forme textuelle
+// Fonction pour dumper une instruction
 void dump_instruction(Instruction instr) {
-    printf("%10s A: %d B: %d C: %d\n", opcode_names[instr.opcode], instr.A, instr.B, instr.C);
+    printf("Instruction: %10s A: %d B: %d C: %d\n", opcode_names[instr.opcode], instr.A, instr.B, instr.C);
 }
 
 // Fonction pour charger un chunk Lua depuis un fichier
@@ -200,6 +200,133 @@ Chunk* load_chunk(FILE *file) {
     }
 
     return chunk;
+}
+
+// VM pour l'execution du bytecode
+// Définition des fonctions natives (GETGLOBAL/print)
+typedef void (*NativeFunction)(double *args, int n_args);
+
+typedef enum {
+    VAL_NUMBER,
+    VAL_NATIVE,
+    VAL_CLOSURE
+} ValueType;
+
+typedef struct {
+    ValueType type;
+    union {
+        double number;
+        NativeFunction native;
+        Chunk *closure;
+    } as;
+} VMValue;
+
+typedef struct {
+    const char *name;
+    NativeFunction function;
+} GlobalFunction;
+
+void native_print(double *args, int n_args) {
+    for (int i = 0; i < n_args; i++) {
+        printf("%f ", args[i]);
+    }
+    printf("\n");
+}
+
+GlobalFunction globals[] = {
+    {"print", native_print}
+};
+#define NUM_GLOBALS (sizeof(globals) / sizeof(globals[0]))
+
+// Structure VM
+typedef struct {
+    VMValue registers[256];
+    Constant *constants;
+    Instruction *instructions;
+    uint32_t instruction_count;
+    Chunk **protos;
+    uint32_t proto_count;
+} VM;
+
+double call_prototype(Chunk *proto, double *args, int nargs) {
+    VMValue registers[256] = {0};
+    for (int i = 0; i < nargs && i < proto->numParams; i++) {
+        registers[i].type = VAL_NUMBER;
+        registers[i].as.number = args[i];
+    }
+
+    for (uint32_t pc = 0; pc < proto->instruction_count; pc++) {
+        Instruction instr = proto->instructions[pc];
+        switch (instr.opcode) {
+            case 12:
+                registers[instr.A].type = VAL_NUMBER;
+                registers[instr.A].as.number = registers[instr.B].as.number + registers[instr.C].as.number;
+                break;
+            case 30:
+                return registers[instr.A].as.number;
+        }
+    }
+    return 0.0;
+}
+
+void vm_execute(VM *vm) {
+    for (uint32_t pc = 0; pc < vm->instruction_count; pc++) {
+        Instruction instr = vm->instructions[pc];
+        switch (instr.opcode) {
+            case 0:
+                vm->registers[instr.A] = vm->registers[instr.B];
+                break;
+            case 1:
+                vm->registers[instr.A].type = VAL_NUMBER;
+                vm->registers[instr.A].as.number = vm->constants[instr.Bx].value.number;
+                break;
+            case 5: {
+                if (instr.Bx < MAX_CONSTANTS && vm->constants[instr.Bx].type == 4) {
+                    char *name = vm->constants[instr.Bx].value.string;
+                    for (int i = 0; i < NUM_GLOBALS; i++) {
+                        if (strcmp(globals[i].name, name) == 0) {
+                            vm->registers[instr.A].type = VAL_NATIVE;
+                            vm->registers[instr.A].as.native = globals[i].function;
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
+            case 12:
+                vm->registers[instr.A].type = VAL_NUMBER;
+                vm->registers[instr.A].as.number = vm->registers[instr.B].as.number + vm->registers[instr.C].as.number;
+                break;
+            case 28: {
+                VMValue func = vm->registers[instr.A];
+                int n_args = instr.B - 1;
+                double args[10];
+                for (int i = 0; i < n_args; i++) {
+                    args[i] = vm->registers[instr.A + 1 + i].as.number;
+                }
+
+                if (func.type == VAL_CLOSURE) {
+                    double result = call_prototype(func.as.closure, args, n_args);
+                    if (instr.C > 1) {
+                        vm->registers[instr.A].type = VAL_NUMBER;
+                        vm->registers[instr.A].as.number = result;
+                    }
+                } else if (func.type == VAL_NATIVE) {
+                    func.as.native(args, n_args);
+                }
+                break;
+            }
+            case 30:
+                return;
+            case 36:
+                vm->registers[instr.A].type = VAL_CLOSURE;
+                vm->registers[instr.A].as.closure = vm->protos[instr.B];
+                break;
+            default:
+                printf("Opcode non pris en charge : %s\n", opcode_names[instr.opcode]);
+                break;
+        }
+    }
 }
 
 // Fonction principale
@@ -378,6 +505,25 @@ int main(int argc, char *argv[]) {
             dump_instruction(chunk->instructions[i]);
         }
     }
+
+    VM vm = {
+    .constants = chunk->constants,
+    .instructions = chunk->instructions,
+    .instruction_count = chunk->instruction_count,
+    .protos = chunk->protos,
+    .proto_count = chunk->proto_count
+    };
+
+    printf("\n=== EXECUTION VM ===\n");
+    vm_execute(&vm);
+
+    printf("AFFICHAGE DES 3 PREMIERS REGISTRES\n");
+    if (vm.registers[0].type == VAL_NUMBER)
+        printf("Résultat (R(0)) = %f\n", vm.registers[0].as.number);
+    if (vm.registers[1].type == VAL_NUMBER)
+        printf("Résultat (R(1)) = %f\n", vm.registers[1].as.number);
+    if (vm.registers[2].type == VAL_NUMBER)
+        printf("Résultat (R(2)) = %f\n", vm.registers[2].as.number);
     
     free(chunk);
     return 0;

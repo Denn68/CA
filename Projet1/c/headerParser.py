@@ -558,7 +558,7 @@ class LuaDump:
 
 
 lc = LuaUndump()
-chunk = lc.loadFile("luac2.out")
+chunk = lc.loadFile("luac1.out")
 
 print("\n===== [[Disassembly]] =====\n")
 

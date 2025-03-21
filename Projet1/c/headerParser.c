@@ -148,7 +148,7 @@ void dump_instruction(Instruction instr) {
     printf("Instruction: %10s A: %d B: %d C: %d\n", opcode_names[instr.opcode], instr.A, instr.B, instr.C);
 }
 
-// Fonction pour charger un chunk Lua depuis un fichier
+// Fonction pour charger un chunk Lua
 Chunk* load_chunk(FILE *file) {
     Chunk *chunk = malloc(sizeof(Chunk));
     chunk->name = read_string(file);

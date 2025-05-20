@@ -1,0 +1,1 @@
+let rec fact = fun x -> if eq(x, 0) then 1 else mult(x, fact(sub(x, 1))) in fact(4)

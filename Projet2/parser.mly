@@ -30,7 +30,7 @@
 %%
 
 prog :
- | expression EOF                      { [] }
+ | expression EOF                      { $1 }
 ;
 expression :
 | LPAREN expression RPAREN                { $2 }

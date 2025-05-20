@@ -1,0 +1,4 @@
+let code = create<1024>() ;;
+
+let load_code() =
+  set(code, 0, Push);  set(code, 1, Quote(Symbol(_rec0)));  set(code, 2, Cons);  set(code, 3, Push);  set(code, 4, Push);  set(code, 5, Push);  set(code, 6, Cdr);  set(code, 7, Swap);  set(code, 8, Quote(Int(0)));  set(code, 9, Cons);  set(code, 10, Eq);  set(code, 11, Quote(Int(1)));  set(code, 12, Push);  set(code, 13, Cdr);  set(code, 14, Swap);  set(code, 15, Push);  set(code, 16, Car);  set(code, 17, Cdr);  set(code, 18, Swap);  set(code, 19, Push);  set(code, 20, Cdr);  set(code, 21, Swap);  set(code, 22, Quote(Int(1)));  set(code, 23, Cons);  set(code, 24, Sub);  set(code, 25, Cons);  set(code, 26, App);  set(code, 27, Cons);  set(code, 28, Mult);  set(code, 29, Branch(11,12));  set(code, 30, Cur(4));  set(code, 31, Swap);  set(code, 32, Rplac);  set(code, 33, Push);  set(code, 34, Cdr);  set(code, 35, Swap);  set(code, 36, Quote(Int(4)));  set(code, 37, Cons);  set(code, 38, App);;

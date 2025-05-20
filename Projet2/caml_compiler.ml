@@ -8,18 +8,18 @@ type pat =
 | IdentPat of ident
 | NullPat
 
-type expr =
+type expression =
 | Ident of ident
 | Number of int
 | False
 | True
-| Apply of expr * expr
-| Mlpair of expr * expr
-| Lambda of pat * expr
-| Fun of pat * expr
-| Let of pat * expr * expr
-| LetRec of pat * expr * expr
-| If of expr * expr * expr
+| Apply of expression * expression
+| Mlpair of expression * expression
+| Lambda of pat * expression
+| Fun of pat * expression
+| Let of pat * expression * expression
+| LetRec of pat * expression * expression
+| If of expression * expression * expression
 
 
 (* figure 7 page 21 (Abstract syntax of CAM code) *)
@@ -42,77 +42,171 @@ and value =
 | Int of int
 | Bool of bool
 | NullValue
-and env = (pat * coms) list
+| Symbol of string   (* ajout *)
+and env = pat
 
-and operator = Add | Sub | Mult
+and operator = Add | Sub | Mult | Eq
 
-let rec addToEnv p coms (env : env) =
-  match p with
-  | NullPat -> []
-  | IdentPat(x) -> [(x, coms)]
-  | PairPat(p1, p2) ->
-      let env1 = addToEnv p1 (Car :: coms) env in
-      let env2 = addToEnv p2 (Cdr :: coms) env in
-      env1 @ env2
+let print_coms (coms : coms) =
+  let rec aux coms =
+    match coms with
+    | [] -> ()
+    | [c] -> print_com c  (* dernier élément, pas de virgule après *)
+    | c :: cs ->
+        print_com c;
+        Printf.printf ", ";
+        aux cs
+  and print_com c =
+    match c with
+    | Quote v ->
+        (match v with
+        | Int n -> Printf.printf "Quote(Int(%d))" n
+        | Bool b -> Printf.printf "Quote(Bool(%b))" b
+        | NullValue -> Printf.printf "NullValue"
+        | Symbol s -> Printf.printf "Quote(Symbol(%s))" s)
+    | Op o ->
+        (match o with
+        | Add -> Printf.printf "Add"
+        | Sub -> Printf.printf "Sub"
+        | Mult -> Printf.printf "Mult"
+        | Eq -> Printf.printf "Eq")
+    | Car -> Printf.printf "Car"
+    | Cdr -> Printf.printf "Cdr"
+    | Cons -> Printf.printf "Cons"
+    | Push -> Printf.printf "Push"
+    | Swap -> Printf.printf "Swap"
+    | App -> Printf.printf "App"
+    | Rplac -> Printf.printf "Rplac"
+    | Cur c ->
+        Printf.printf "Cur([";
+        aux c;
+        Printf.printf "])"
+    | Branch (c1, c2) ->
+        Printf.printf "Branch([";
+        aux c1;
+        Printf.printf "], [";
+        aux c2;
+        Printf.printf "])"
+  in
+  Printf.printf "[";
+  aux coms;
+  Printf.printf "]"
 
-let rec treePath (x : ident) p (coms : coms) =
+
+let rec string_of_expression expr =
+  match expr with
+  | Ident s -> Printf.sprintf "Ident(\"%s\")" s
+  | Number n -> Printf.sprintf "Number(%d)" n
+  | True -> "True"
+  | False -> "False"
+  | Fun (pat, e) ->
+      Printf.sprintf "Fun(%s, %s)" (string_of_pat pat) (string_of_expression e)
+  | Let (pat, e1, e2) ->
+      Printf.sprintf "Let(%s, %s, %s)" (string_of_pat pat) (string_of_expression e1) (string_of_expression e2)
+  | LetRec (pat, e1, e2) ->
+      Printf.sprintf "LetRec(%s, %s, %s)" (string_of_pat pat) (string_of_expression e1) (string_of_expression e2)
+  | If (e1, e2, e3) ->
+      Printf.sprintf "If(%s, %s, %s)" (string_of_expression e1) (string_of_expression e2) (string_of_expression e3)
+  | Apply (e1, e2) ->
+      Printf.sprintf "Apply(%s, %s)" (string_of_expression e1) (string_of_expression e2)
+  | Mlpair (e1, e2) ->
+      Printf.sprintf "MlPair(%s, %s)" (string_of_expression e1) (string_of_expression e2)
+
+and string_of_pat pat =
+  match pat with
+  | IdentPat s -> Printf.sprintf "IdentPat(\"%s\")" s
+  | NullPat -> "NullPat"
+  | PairPat (p1, p2) ->
+      Printf.sprintf "PairPat(%s, %s)" (string_of_pat p1) (string_of_pat p2)
+
+
+
+(* Figure 9 page 23 (Environment) *)
+
+let rec treePath (x : ident) (p : pat) : coms option =
   match p with
   | NullPat -> None
-  | IdentPat(y) -> if x = y then Some coms else None
+  | IdentPat y ->
+      if x = y then Some [] else None
   | PairPat(p1, p2) ->
-      match treePath x p1 (Car :: coms) with
-      | Some path -> Some path
-      | None -> treePath x p2 (Cdr :: coms)
+      match treePath x p1 with
+      | Some path -> Some (Car :: path)
+      | None ->
+          match treePath x p2 with
+          | Some path -> Some (Cdr :: path)
+          | None -> None
 
-let rec lookIntoEnv (x : ident) (env : env) : coms =
-  match env with
-  | [] -> failwith ("Unbound identifier: " ^ x)
-  | p :: ps -> (
-    let (p1, p2) = p in
-      match treePath x p1 p2 with
-      | Some path -> path
-      | None -> Cdr :: lookIntoEnv x ps
-  )
+
+let lookIntoEnv (x : ident) (env : pat) : coms =
+  match treePath x env with
+  | Some path -> path
+  | None -> failwith ("Unbound identifier: " ^ x)
+
+
             
+let counter = ref 0
+let fresh () =
+  let n = !counter in
+  incr counter;
+  "_rec" ^ string_of_int n
 
 
 (* Figure 10 page 24 (Translation from Mini-ML to CAM) *)
-let rec compile (env:env) (e:expr) : coms =
+let rec compile (env:env) (e:expression) : coms =
   match e with
-  _ -> failwith "todo"
-  | Number(n) -> [Quote(Int(n))]
+
+  Number(n) -> [Quote(Int(n))]
+
   | True -> [Quote(Bool(true))]
+
   | False -> [Quote(Bool(false))]
-  | Ident(i) -> lookIntoEnv i env
+
+  | Ident(i) ->
+    lookIntoEnv i env
+
   | If(e1, e2, e3) -> [Push] @ compile env e1 @  [Branch((compile env e2) ,(compile env e3))]
+
   | Mlpair(e1, e2) -> [Push] @ compile env e1 @ [Swap] @ compile env e2 @ [Cons]
+
   | Fun(p,e) -> (
-    let env2 = addToEnv p (compile env e) env in
-    [Cur(compile env2 e)]
+    let body = compile (PairPat(env,p)) e in
+    [Cur(body)]
   )
+
   | Let(p, e1, e2) -> (
-    let env2 = addToEnv p (compile env e1) env in
+    let env2 = PairPat(env,p) in
     [Push] @ compile env e1 @ [Cons] @ compile env2 e2
   )
+
   | LetRec(p, e1, e2) -> (
-    let env2 = addToEnv p (compile env e1) env in
-    [Push; Quote(env2); Cons; Push] @ compile env2 e1 @ [Swap; Rplac] @ compile env2 e2
+    let p1 = fresh () in
+    let env2 = PairPat(env,p) in
+    let c1 = compile env2 e1 in
+    let c2 = compile env2 e2 in
+    [Push; Quote(Symbol p1); Cons; Push] @ c1 @ [Swap; Rplac] @ c2
   )
+
   | Apply(e1,e2) -> (
-    let c1 = compile_trans e1 in
-    match c1 with
-    Car -> [(compile env e2); c1]
-    | Cdr -> [(compile env e2); c1]
-    | Op(_) -> [(compile env e2); c1]
-    | _ -> [Push] @ compile env e1 @ [Swap] @ compile env e2 @ [Cons; App]
+    match e1 with
+    | Ident("fst") | Ident("snd") | Ident("add") | Ident("sub") | Ident("mult") | Ident("eq")->
+        let c1 = compile_trans e1 in
+        compile env e2 @ [c1]
+    | _ ->
+        [Push] @ compile env e1 @ [Swap] @ compile env e2 @ [Cons; App]
   )
+  | _ -> failwith "todo"
 and compile_trans e =
   match e with
-  Ident("fst") -> Car
-  | Ident("and") -> Cdr
-  | Ident(x) -> 
-    match x with
-    "add" -> Op(Add)
-    | "sub" -> Op(Sub)
-    | "mult" -> Op(Mult)
-   
+  | Ident("fst") -> Car
+  | Ident("snd") -> Cdr
+  | Ident("add") -> Op(Add)
+  | Ident("sub") -> Op(Sub)
+  | Ident("mult") -> Op(Mult)
+  | Ident("eq") -> Op(Eq)
+;;
+
+
+let compile_prog (e:expression) : coms =
+  let env = NullPat in
+  compile env e
+;;
